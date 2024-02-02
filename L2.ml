@@ -76,7 +76,7 @@ and
   O closure carrega esse ambiente para dar sentido às variáveis que possam ocorrer dentro do corpoda função,
   mas cujos valores foram definidos fora docorpo da funcão (chamadas de variáveis livres da funcão).
   Esse mecanismo é chamado de escopo estático.*)
-renv = (ident * valor) list 
+  renv = (ident * valor) list 
 
 type mem = (ident * valor) list
     
@@ -90,7 +90,7 @@ let rec lookup environment identifier =
   match environment with
     [] -> None
   | (headIdentifier, headType) :: tail 
-      -> if (headIdentifier=identifier) then Some headType else lookup tail identificador
+    -> if (headIdentifier=identifier) then Some headType else lookup tail identifier
        
 (* A notação Γ,x : T (usada na regra para funções, let, e let rec), representa a operação update(Γ,(x,T)) *)
 (* update(Γ,(x,T)) *)
@@ -106,11 +106,11 @@ let rec update environment identifier typeIdentifier =
    Cada string address na lista é convertida para um inteiro usando int_of_string, e o máximo entre o valor convertido 
    e o máximo atual (actualPositionMem) é calculado recursivamente. A função retorna o valor máximo encontrado.*)
 let rec lastAddress mem actualPositionMem =
-(match mem with
-  | [] -> actualPositionMem 
-  | (positionMemHead, valorPositionMem) :: tail -> 
-      let positionMemHeadConvertedToInt = int_of_string positionMemHead in 
-      lastAddress tail (max positionMemHeadConvertedToInt actualPositionMem))
+  (match mem with
+   | [] -> actualPositionMem 
+   | (positionMemHead, valorPositionMem) :: tail -> 
+       let positionMemHeadConvertedToInt = int_of_string positionMemHead in 
+       lastAddress tail (max positionMemHeadConvertedToInt actualPositionMem))
 
 (* exceções que não devem ocorrer  *)
 exception BugParser
@@ -169,7 +169,7 @@ let rec typeinfer (tenv:tenv) (e:expr) : tipo =
            let t2 = typeinfer tenv e2 in
            let t3 = typeinfer tenv e3
            in if t2 = t3 then t2
-              else raise (TypeError "then/else com tipos diferentes")
+           else raise (TypeError "then/else com tipos diferentes")
        | _ -> raise (TypeError "condição de IF não é do tipo bool"))
 
   (* T-Fn *)
@@ -254,72 +254,118 @@ let compute (oper: op) (v1: valor) (v2: valor) : valor =
   | _ -> raise BugTypeInfer
 
 (* ++++++++ SEMÂNTICA OPERACIONAL ++++++++*)
-let rec eval (renv:renv) (e:expr) : valor =
+let rec eval (renv:renv) (mem:mem) (e:expr) : (valor * mem) =
   match e with
-    Num n -> VNum n
-  | True -> VTrue
-  | False -> VFalse
+  | Num n -> (VNum n, mem)
+  | True -> (VTrue, mem)
+  | False -> (VFalse, mem)
 
   | Var x ->
       (match lookup renv x with
-         Some v -> v
+         Some v -> (v, mem)
        | None -> raise BugTypeInfer)
       
   | Binop(oper,e1,e2) ->
-      let v1 = eval renv e1 in
-      let v2 = eval renv e2 in
-      compute oper v1 v2
+      let (v1, mem) = eval renv mem e1 in
+      let (v2, mem) = eval renv mem e2 in
+      (compute oper v1 v2, mem)
 
   | Pair(e1,e2) ->
-      let v1 = eval renv e1 in
-      let v2 = eval renv e2
-      in VPair(v1,v2)
+      let (v1, mem) = eval renv mem e1 in
+      let (v2, mem) = eval renv mem e2
+      in (VPair(v1,v2), mem)
 
   | Fst e ->
-      (match eval renv e with
-       | VPair(v1,_) -> v1
+      (match eval renv mem e with
+       | (VPair(v1,_), mem) -> (v1, mem)
        | _ -> raise BugTypeInfer)
 
   | Snd e ->
-      (match eval renv e with
-       | VPair(_,v2) -> v2
+      (match eval renv mem e with
+       | (VPair(v2,_), mem) -> (v2, mem)
        | _ -> raise BugTypeInfer)
 
   (*If*)
   | If(e1,e2,e3) ->
-      (match eval renv e1 with
-         VTrue  -> eval renv e2
-       | VFalse -> eval renv e3
+      let (v1, mem) = eval renv mem e1 in
+      (match v1 with
+         VTrue  -> eval renv mem e2
+       | VFalse -> eval renv mem e3
        | _ -> raise BugTypeInfer )
 
   (*E-β*)
-  | Fn (x,_,e1) ->  VClos(x,e1,renv)
+  (*Ao invés de realizar a substituição de identificadores por valores, é construída uma estrutura
+  de dados (ambiente) que descreve a substituição. A substituição só é feita sob demanda ao nos
+   depararmos com variáveis. Ao utilizarmos esse modelo, contudo, precisamos ser mais cuidadosos com 
+   questões de escopo. O valor ⟨x,e,ρ⟩ é denominada closure e representa uma função ao comseu argumento x,
+    seu corpo e e o ambiente ρ. Esse ambiente ρ corresponde ao ambiente vigente no momento em que
+    a função eavaliada com o valor. O closure carrega esse ambiente para dar sentido as variáveis
+    que possam ocorrer dentro do corpo da função mas cujos valores foram definidos fora do corpo 
+    da função(chamadas de variáveis livres da função). Esse mecanismo é chamado de escopo estático. 
+    Se isso não fosse feito, os valores das variáveis livres da função seriam obtidos no ambiente 
+vigente no momento da chamada da função o que é conhecido como escopo dinâmico.*)
+  | Fn (x,_,e1) ->  (VClos(x,e1,renv), mem)
 
   (*E-App*)
   | App(e1,e2) ->
-      let v1 = eval renv e1 in
-      let v2 = eval renv e2 in
+      let (v1, mem) = eval renv mem e1 in
+      let (v2, mem) = eval renv mem e2 in
       (match v1 with
          VClos(x,ebdy,renv') ->
            let renv'' = update renv' x v2
-           in eval renv'' ebdy
+           in eval renv'' mem ebdy
 
        | VRclos(f,x,ebdy,renv') ->
            let renv''  = update renv' x v2 in
            let renv''' = update renv'' f v1
-           in eval renv''' ebdy
+           in eval renv''' mem ebdy
        | _ -> raise BugTypeInfer)
 
   | Let(x,_,e1,e2) ->
-      let v1 = eval renv e1
-      in eval (update renv x v1) e2
+      let  (v1, mem) = eval renv mem e1
+      in eval (update renv x v1) mem e2
 
   | LetRec(f,TyFn(t1,t2),Fn(x,tx,e1), e2) when t1 = tx ->
       let renv'= update renv f (VRclos(f,x,e1,renv))
-      in eval renv' e2
-        
+      in eval renv' mem e2
         
   | LetRec _ -> raise BugParser
+
+  
+  | Skip -> (VSkip, mem)
+                  
+  | Asg(e1,e2) ->
+      let (v1, mem) = eval renv mem e1 in 
+      let (v2, mem) = eval renv mem e2 in
+      (match v1 with 
+         VIdent(t) -> 
+           (match lookup mem t with
+              Some a -> (VSkip, update mem t v2) 
+            | None -> raise BugTypeInfer) 
+       | _ -> raise BugTypeInfer)
+      
+  | Dref(e) -> 
+      let (v, mem) = eval renv mem e in
+      (match v with 
+         VIdent(t) ->
+           (match lookup mem t with
+              Some a -> (a, mem)
+            | None -> raise BugTypeInfer) 
+       | _ -> raise BugTypeInfer) 
+      
+  | New(e) ->
+      let (v, mem) = eval renv mem e in (* quando e avaliar para um valor*)
+      let i = Printf.sprintf "%d" ((lastAddress mem 0) + 1) in (* pegamos uma posição de mem não alocada *)
+      (VIdent(i), update mem i v) (* então atualizamos a mem e retornamos o endereço *)
+      
+  (* skip quando da certo o loop*)    
+  | Whl(e1, e2) ->  eval renv mem (If (e1, Seq(e2, Whl(e1, e2)), Skip)) 
+                      
+  | Seq(e1,e2) ->
+      let (v1, mem) = eval renv mem e1 in
+      (match v1 with
+         VSkip -> eval renv mem e2
+       | _ -> raise BugTypeInfer)
                   
                   
 (* função auxiliar que converte tipo para string *)
@@ -330,25 +376,29 @@ let rec ttos (t:tipo) : string =
   | TyBool -> "bool"
   | TyFn(t1,t2)   ->  "("  ^ (ttos t1) ^ " --> " ^ (ttos t2) ^ ")"
   | TyPair(t1,t2) ->  "("  ^ (ttos t1) ^ " * "   ^ (ttos t2) ^ ")"
+  (*| TyFn(t1,t2)   ->  "("  ^ (ttos t1) ^ " --> " ^ (ttos t2) ^ ")"*)
+  | TyRef(t) ->  "Ref("  ^ (ttos t) ^ ")"
+  | TyUnit -> "unit"
 
 (* função auxiliar que converte valor para string *)
 
 let rec vtos (v: valor) : string =
   match v with
-    VNum n -> string_of_int n
+  | VNum n -> string_of_int n
   | VTrue -> "true"
   | VFalse -> "false"
-  | VPair(v1, v2) ->
-      "(" ^ vtos v1 ^ "," ^ vtos v1 ^ ")"
   | VClos _ ->  "fn"
   | VRclos _ -> "fn"
+  | VSkip -> "skip"
+  | VIdent _ -> "ident" 
+  | VPair _ -> "pair"  
 
 (* principal do interpretador *)
 
 let int_bse (e:expr) : unit =
   try
     let t = typeinfer [] e in
-    let v = eval [] e
+    let (v, mem) = eval [] [] e
     in  print_string ((vtos v) ^ " : " ^ (ttos t))
   with
     TypeError msg ->  print_string ("erro de tipo - " ^ msg)
@@ -363,6 +413,105 @@ let int_bse (e:expr) : unit =
 (* +++++++++++++++++++++++++++++++++++++++*)
 (*                TESTES                  *)
 (*++++++++++++++++++++++++++++++++++++++++*)
+
+(*  
+    o programa abaixo retorna
+        valor   = 7 
+        memória = [(l1, 4)] 
+    
+    let x : int ref = new 3 in  -- x = end 1; 
+    let y : int = !x in  --  y = 3
+        (x := !x + 1);   -- 
+        y + !x
+*) 
+let teste1 = Let("x", TyRef TyInt, New (Num 3),
+                 Let("y", TyInt, Dref (Var "x"),
+                     Seq(Asg(Var "x", Binop(Sum, Dref(Var "x"), Num 1)),
+                         Binop(Sum, Var "y",  Dref (Var "x")))))
+                                                                 
+(*
+        o programa abaixo retorna
+        valor   = 1 
+        memória = [(l1, 1)] 
+
+     let x: int ref  = new 0 in
+     let y: int ref  = x in
+        x := 1;
+        !y
+*) 
+let teste2 = Let("x", TyRef TyInt, New (Num 0),
+                 Let("y", TyRef TyInt, Var "x",
+                     Seq(Asg(Var "x", Num 1),
+                         Dref (Var "y"))))
+                                           
+(*  
+    o programa abaixo retorna
+    valor   = 3
+    memória = [(l1, 2)]
+    
+
+let counter : int ref = new 0  in 
+let next_val : unit -> int =
+  fn ():unit  =>
+        counter := (!counter) + 1;
+  !counter
+in  (next_val()  + next_val())  
+    *) 
+let counter1 = Let("counter", TyRef TyInt, New (Num 0),
+                   Let("next_val", TyFn(TyUnit, TyInt),
+                       Fn("w", TyUnit,
+                          Seq(Asg(Var "counter",Binop(Sum, Dref(Var "counter"), Num 1)),
+                              Dref (Var "counter"))),
+                       Binop(Sum, App (Var "next_val", Skip),
+                             App (Var "next_val", Skip))))
+  
+(*   
+     o programa abaixo retorna
+     valor = 120
+     memória = [(l2, 120), (l1,0) ]
+     
+let fat (x:int) : int = 
+
+let z : int ref = new x in
+let y : int ref = new 1 in 
+while (!z > 0) (
+    y :=  !y * !z;
+    z :=  !z - 1;
+  );
+  ! y
+in
+fat 5
+       
+       
+       
+  SEM açucar sintático
+    
+let fat : int-->int = fn x:int => 
+
+                           let z : int ref = new x in
+                           let y : int ref = new 1 in 
+        
+                           while (!z > 0) (
+                               y :=  !y * !z;
+                               z :=  !z - 1;
+                             );
+                             ! y
+in
+fat 5
+*)
+let whilefat = Whl(Binop(Gt, Dref (Var "z"), Num 0),
+                   Seq( Asg(Var "y", Binop(Mult, Dref (Var "y"), Dref (Var "z"))),
+                        Asg(Var "z", Binop(Sub, Dref (Var "z"), Num 1)))
+                  )
+                             
+let bodyfat = Let("z", TyRef TyInt, New (Var "x"),
+                  Let("y", TyRef TyInt, New (Num 1), Seq (whilefat, Dref (Var "y"))))
+    
+let impfat = Let("fat", TyFn(TyInt,TyInt), Fn("x", TyInt, bodyfat), App(Var "fat", Num 5))
+
+
+(* Testes antigos  *)
+
 
 (* Escopo Estático (ou Léxico): *)
 (* Característica Principal: O escopo de uma variável é determinado pelo local onde a variável é declarada no código-fonte. *)
@@ -397,4 +546,4 @@ let e2 = Let("x", TyInt, Num 5, Var "foo")
 
 let e1  = Let("foo", TyFn(TyInt,TyInt), Fn("y", TyInt, Binop(Sum, Var "x", Var "y")), e2)
 
-let tst2 = Let("x", TyInt, Num(2), e1) 
+let tst2 = Let("x", TyInt, Num(2), e1)
