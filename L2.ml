@@ -16,6 +16,8 @@ type tipo =
   | TyBool (* T-Bool, tipo booleano *)
   | TyFn of tipo * tipo (* T-Fn, tipo função *)
   | TyPair of tipo * tipo (* T-Pair, tipos pares ordenados *)
+  | TyRef of tipo
+  | TyUnit
 
 (* +++++++++++++++++ EXPRESSÕES +++++++++++++++++*)
 (* Identificadores de variáveis são representados como strings *)
@@ -41,6 +43,16 @@ type expr =
   | App of expr * expr (* e1 e2 *)
   | Let of ident * tipo * expr * expr (* let x: T = e1 in e2 *)
   | LetRec of ident * tipo * expr  * expr (* let rec f: T1 → T2 = (fn x: T1 ⇒ e1) in e2 *)
+  | Asg of expr * expr
+
+  (* Os operadores unários new e ! são usados para alocar uma posicão de memória e para acessar o valor contido
+     em uma determinada posicão de memória *)
+  | Dref of expr (* !e *)
+  | New of expr (* new e *)
+
+  | Seq of expr * expr
+  | Whl of expr * expr
+  | Skip
      
 (* ++++++++++++++++++ AMBIENTE ++++++++++++++++++*)
 (* Ambiente de tipos Γ *)
@@ -54,8 +66,10 @@ type valor =
   | VTrue (* b *)
   | VFalse (* b *)
   | VPair of valor * valor (* (v1, v2) *)
-  | VClos  of ident * expr * renv (* Γ ⊢ fn: T ⇒ e *)
+  | VClos of ident * expr * renv (* Γ ⊢ fn: T ⇒ e *)
   | VRclos of ident * ident * expr * renv (* Γ ⊢ fn: T ⇒ e *)
+  | VSkip
+  | VIdent of ident
 and 
 (* Ambiente de tipos em runtime*)
 (* Esse ambiente ρ corresponde ao ambiente vigente no momento em que a função é avaliada como valor.
@@ -63,6 +77,8 @@ and
   mas cujos valores foram definidos fora docorpo da funcão (chamadas de variáveis livres da funcão).
   Esse mecanismo é chamado de escopo estático.*)
 renv = (ident * valor) list 
+
+type mem = (ident * valor) list
     
 (* ++++++++++++++++++ AMBIENTE ++++++++++++++++++*)
 (* funções polimórficas para ambientes *)
@@ -70,14 +86,31 @@ renv = (ident * valor) list
    que são mantidas em Γ ”. O ambientede tipos Γ captura a essência de uma tabela de símbolos de um compilador/interpretador formalizada aqui
    como uma funcão de identificadores declarados para seus tipos. A notacão Γ(x) pode ser vista como uma abstracão para uma operacão lookup(Γ, x) *)
 (* T-Var−lookpup retorna erro se x nao foi declarado *)    
-let rec lookup a k =
-  match a with
+let rec lookup environment identifier =
+  match environment with
     [] -> None
-  | (y,i) :: tl -> if (y=k) then Some i else lookup tl k 
+  | (headIdentifier, headType) :: tail 
+      -> if (headIdentifier=identifier) then Some headType else lookup tail identificador
        
 (* A notação Γ,x : T (usada na regra para funções, let, e let rec), representa a operação update(Γ,(x,T)) *)
-let rec update a k i =
-  (k,i) :: a   
+(* update(Γ,(x,T)) *)
+(* update(environment,(identifier, typeIdentifier)) *)
+let rec update environment identifier typeIdentifier = 
+  (match environment with
+   | [] -> (identifier, typeIdentifier) :: environment
+   | (headIdentifier, headType) :: tail -> 
+       if (headIdentifier=identifier) then (identifier, typeIdentifier) :: tail
+       else (headIdentifier, headType) :: (update tail identifier typeIdentifier)) 
+
+(* Função recursiva lastAddress encontra o valor máximo de uma lista de strings que representam números inteiros.
+   Cada string address na lista é convertida para um inteiro usando int_of_string, e o máximo entre o valor convertido 
+   e o máximo atual (actualPositionMem) é calculado recursivamente. A função retorna o valor máximo encontrado.*)
+let rec lastAddress mem actualPositionMem =
+(match mem with
+  | [] -> actualPositionMem 
+  | (positionMemHead, valorPositionMem) :: tail -> 
+      let positionMemHeadConvertedToInt = int_of_string positionMemHead in 
+      lastAddress tail (max positionMemHeadConvertedToInt actualPositionMem))
 
 (* exceções que não devem ocorrer  *)
 exception BugParser
@@ -163,7 +196,46 @@ let rec typeinfer (tenv:tenv) (e:expr) : tipo =
       if (typeinfer tenv_com_tf_tx e1) = t2
       then typeinfer tenv_com_tf e2
       else raise (TypeError "tipo da funcao diferente do declarado")
-  | LetRec _ -> raise BugParser           
+  | LetRec _ -> raise BugParser  
+  
+  (* T-Skip *)
+  | Skip -> TyUnit
+
+  (* T-Atr *)
+  | Asg(e1,e2) ->
+      let t1 = typeinfer tenv e1 in
+      let t2 = typeinfer tenv e2 in
+      (match t1 with
+         TyRef(t) ->
+           if t2 = t then TyUnit
+           else raise (TypeError "ref e atribuicao de tipos diferentes")
+       | _ -> raise (TypeError "era esperado um tipo ref"))
+
+  (* T-Deref *)
+  | Dref(e1) ->
+      let t1 = typeinfer tenv e1 in
+      (match t1 with
+         TyRef(t) -> t
+       | _ -> raise (TypeError "era esperado um tipo ref"))
+
+  (*  *)
+  | Whl(e1, e2) ->
+      let t1 = typeinfer tenv e1 in
+      let t2 = typeinfer tenv e2 in
+      (match (t1, t2) with
+         (TyBool, TyUnit) -> TyUnit
+       | _ -> raise (TypeError "era esperado um tipo bool e um tipo unit"))
+
+  (* T-New *)
+  | New(e1) -> TyRef(typeinfer tenv e1)
+
+  (* T-Seq *)
+  | Seq(e1,e2) ->
+      let t1 = typeinfer tenv e1 in
+      let t2 = typeinfer tenv e2 in
+      (match t1 with
+         TyUnit -> t2
+       | _ -> raise (TypeError "era esperado um tipo unit"))
   
 (**+++++++++++++++++++++++++++++++++++++++++*)
 (*                 AVALIADOR                *)
@@ -187,7 +259,6 @@ let rec eval (renv:renv) (e:expr) : valor =
     Num n -> VNum n
   | True -> VTrue
   | False -> VFalse
-
 
   | Var x ->
       (match lookup renv x with
