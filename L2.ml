@@ -1,3 +1,6 @@
+(* This is an OCaml editor.
+   Enter your program here and send it to the toplevel using the "Eval code"
+   button or [Ctrl-e]. *)
 (*++++++++++++++++++++++++++++++++++++++*)
 (*  Interpretador para L1               *)
 (*   - inferência de tipos              *)
@@ -390,8 +393,9 @@ let rec vtos (v: valor) : string =
   | VClos _ ->  "fn"
   | VRclos _ -> "fn"
   | VSkip -> "skip"
-  | VIdent _ -> "ident" 
+  | VIdent i -> i 
   | VPair _ -> "pair"  
+
 
 (* principal do interpretador *)
 
@@ -546,4 +550,4 @@ let e2 = Let("x", TyInt, Num 5, Var "foo")
 
 let e1  = Let("foo", TyFn(TyInt,TyInt), Fn("y", TyInt, Binop(Sum, Var "x", Var "y")), e2)
 
-let tst2 = Let("x", TyInt, Num(2), e1)
+let tst2 = Let("x", TyInt, Num(2), e1) 
