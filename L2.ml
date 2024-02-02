@@ -57,7 +57,12 @@ type valor =
   | VClos  of ident * expr * renv (* Γ ⊢ fn: T ⇒ e *)
   | VRclos of ident * ident * expr * renv (* Γ ⊢ fn: T ⇒ e *)
 and 
-  renv = (ident * valor) list (* Ambiente de tipos em runtime Γ *)
+(* Ambiente de tipos em runtime*)
+(* Esse ambiente ρ corresponde ao ambiente vigente no momento em que a função é avaliada como valor.
+  O closure carrega esse ambiente para dar sentido às variáveis que possam ocorrer dentro do corpoda função,
+  mas cujos valores foram definidos fora docorpo da funcão (chamadas de variáveis livres da funcão).
+  Esse mecanismo é chamado de escopo estático.*)
+renv = (ident * valor) list 
     
 (* ++++++++++++++++++ AMBIENTE ++++++++++++++++++*)
 (* funções polimórficas para ambientes *)
@@ -284,11 +289,17 @@ let int_bse (e:expr) : unit =
 
 
 
- (* +++++++++++++++++++++++++++++++++++++++*)
- (*                TESTES                  *)
- (*++++++++++++++++++++++++++++++++++++++++*)
+(* +++++++++++++++++++++++++++++++++++++++*)
+(*                TESTES                  *)
+(*++++++++++++++++++++++++++++++++++++++++*)
 
+(* Escopo Estático (ou Léxico): *)
+(* Característica Principal: O escopo de uma variável é determinado pelo local onde a variável é declarada no código-fonte. *)
+(* Como Funciona: A resolução de identificadores é feita no momento da compilação, com base na estrutura léxica (estrutura de blocos) do código. *)
 
+(* Escopo Dinâmico: *)
+(* Característica Principal: O escopo de uma variável é determinado pelo contexto de execução durante o tempo de execução do programa. *)
+(* Como Funciona: A resolução de identificadores é feita no momento da execução, com base nas variáveis disponíveis no momento da chamada da função.*)
 
 (*
      let x:int = 2 
